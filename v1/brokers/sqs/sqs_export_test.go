@@ -126,15 +126,15 @@ func init() {
 	}
 }
 
-func (b *Broker) ConsumeForTest(deliveries <-chan *awssqs.ReceiveMessageOutput, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
+func (b *Broker) ConsumeForTest(deliveries <-chan *ReceivedMessages, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
 	return b.consume(deliveries, concurrency, taskProcessor, pool)
 }
 
-func (b *Broker) ConsumeOneForTest(delivery *awssqs.ReceiveMessageOutput, taskProcessor iface.TaskProcessor) error {
+func (b *Broker) ConsumeOneForTest(delivery *ReceivedMessages, taskProcessor iface.TaskProcessor) error {
 	return b.consumeOne(delivery, taskProcessor)
 }
 
-func (b *Broker) DeleteOneForTest(delivery *awssqs.ReceiveMessageOutput) error {
+func (b *Broker) DeleteOneForTest(delivery *ReceivedMessages) error {
 	return b.deleteOne(delivery)
 }
 
@@ -150,7 +150,7 @@ func (b *Broker) InitializePoolForTest(pool chan struct{}, concurrency int) {
 	b.initializePool(pool, concurrency)
 }
 
-func (b *Broker) ConsumeDeliveriesForTest(deliveries <-chan *awssqs.ReceiveMessageOutput, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}, errorsChan chan error) (bool, error) {
+func (b *Broker) ConsumeDeliveriesForTest(deliveries <-chan *ReceivedMessages, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}, errorsChan chan error) (bool, error) {
 	return b.consumeDeliveries(deliveries, concurrency, taskProcessor, pool, errorsChan)
 }
 

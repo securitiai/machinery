@@ -92,10 +92,11 @@ func TestPrivateFunc_consume(t *testing.T) {
 	}
 	pool := make(chan struct{}, 0)
 	wk := server1.NewWorker("sms_worker", 0)
-	deliveries := make(chan *awssqs.ReceiveMessageOutput)
+	deliveries := make(chan *sqs.ReceivedMessages)
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []*awssqs.Message{}
-	go func() { deliveries <- &outputCopy }()
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
+	go func() { deliveries <- &receivedMsg }()
 
 	// an infinite loop will be executed only when there is no error
 	err = testAWSSQSBroker.ConsumeForTest(deliveries, 0, wk, pool)
@@ -109,12 +110,13 @@ func TestPrivateFunc_consumeOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	wk := server1.NewWorker("sms_worker", 0)
-	err = testAWSSQSBroker.ConsumeOneForTest(receiveMessageOutput, wk)
-	assert.NotNil(t, err)
-
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []*awssqs.Message{}
-	err = testAWSSQSBroker.ConsumeOneForTest(&outputCopy, wk)
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
+	err = testAWSSQSBroker.ConsumeOneForTest(&receivedMsg, wk)
+	assert.NotNil(t, err)
+
+	err = testAWSSQSBroker.ConsumeOneForTest(&receivedMsg, wk)
 	assert.NotNil(t, err)
 
 	outputCopy.Messages = []*awssqs.Message{
@@ -122,7 +124,8 @@ func TestPrivateFunc_consumeOne(t *testing.T) {
 			Body: aws.String("foo message"),
 		},
 	}
-	err = testAWSSQSBroker.ConsumeOneForTest(&outputCopy, wk)
+	receivedMsg = sqs.ReceivedMessages{Delivery: &outputCopy}
+	err = testAWSSQSBroker.ConsumeOneForTest(&receivedMsg, wk)
 	assert.NotNil(t, err)
 }
 
@@ -173,13 +176,16 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 	concurrency := 0
 	pool := make(chan struct{}, concurrency)
 	errorsChan := make(chan error)
-	deliveries := make(chan *awssqs.ReceiveMessageOutput)
+	deliveries := make(chan *sqs.ReceivedMessages)
 	server1, err := machinery.NewServer(cnf)
 	if err != nil {
 		t.Fatal(err)
 	}
 	wk := server1.NewWorker("sms_worker", 0)
-	go func() { deliveries <- receiveMessageOutput }()
+	outputCopy := *receiveMessageOutput
+	outputCopy.Messages = []*awssqs.Message{}
+	receivedMsg := sqs.ReceivedMessages{Delivery:&outputCopy}
+	go func() { deliveries <- &receivedMsg }()
 	whetherContinue, err := testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
 	assert.True(t, whetherContinue)
 	assert.Nil(t, err)
@@ -194,9 +200,10 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 	assert.False(t, whetherContinue)
 	assert.Nil(t, err)
 
-	outputCopy := *receiveMessageOutput
+	outputCopy = *receiveMessageOutput
 	outputCopy.Messages = []*awssqs.Message{}
-	go func() { deliveries <- &outputCopy }()
+	receivedMsg = sqs.ReceivedMessages{Delivery:&outputCopy}
+	go func() { deliveries <- &receivedMsg }()
 	whetherContinue, err = testAWSSQSBroker.ConsumeDeliveriesForTest(deliveries, concurrency, wk, pool, errorsChan)
 	e := <-errorsChan
 	assert.True(t, whetherContinue)
@@ -204,6 +211,9 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 	assert.Nil(t, err)
 
 	// using a wait group and a channel to fix the racing problem
+	outputCopy = *receiveMessageOutput
+	outputCopy.Messages = []*awssqs.Message{}
+	receivedMsg = sqs.ReceivedMessages{Delivery:&outputCopy}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	nextStep := make(chan bool, 1)
@@ -211,7 +221,7 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 		defer wg.Done()
 		// nextStep <- true runs after defer wg.Done(), to make sure the next go routine runs after this go routine
 		nextStep <- true
-		deliveries <- receiveMessageOutput
+		deliveries <- &receivedMsg
 	}()
 	if <-nextStep {
 		// <-pool will block the routine in the following steps, so pool <- struct{}{} will be executed for sure
@@ -226,10 +236,18 @@ func TestPrivateFunc_consumeDeliveries(t *testing.T) {
 }
 
 func TestPrivateFunc_deleteOne(t *testing.T) {
-	err := testAWSSQSBroker.DeleteOneForTest(receiveMessageOutput)
+	outputCopy := *receiveMessageOutput
+	outputCopy.Messages = []*awssqs.Message{
+		{
+			Body: aws.String("foo message"),
+			ReceiptHandle: aws.String("receipthandle"),
+		},
+	}
+	receivedMsg := sqs.ReceivedMessages{Delivery: &outputCopy}
+	err := testAWSSQSBroker.DeleteOneForTest(&receivedMsg)
 	assert.Nil(t, err)
 
-	err = errAWSSQSBroker.DeleteOneForTest(receiveMessageOutput)
+	err = errAWSSQSBroker.DeleteOneForTest(&receivedMsg)
 	assert.NotNil(t, err)
 }
 
@@ -275,7 +293,7 @@ func TestPrivateFunc_consumeWithConcurrency(t *testing.T) {
 	pool := make(chan struct{}, 1)
 	pool <- struct{}{}
 	wk := server1.NewWorker("sms_worker", 1)
-	deliveries := make(chan *awssqs.ReceiveMessageOutput)
+	deliveries := make(chan *sqs.ReceivedMessages)
 	outputCopy := *receiveMessageOutput
 	outputCopy.Messages = []*awssqs.Message{
 		{
@@ -283,9 +301,9 @@ func TestPrivateFunc_consumeWithConcurrency(t *testing.T) {
 			Body:      aws.String(msg),
 		},
 	}
-
+	receivedMsg := sqs.ReceivedMessages{Delivery:&outputCopy}
 	go func() {
-		deliveries <- &outputCopy
+		deliveries <- &receivedMsg
 
 	}()
 
@@ -300,5 +318,51 @@ func TestPrivateFunc_consumeWithConcurrency(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		// call timed out
 		t.Fatal("task not processed in 10 seconds")
+	}
+}
+
+type roundRobinQueues struct {
+	queues       []string
+	currentIndex int
+}
+
+func NewRoundRobinQueues(queues []string) *roundRobinQueues {
+	return &roundRobinQueues{
+		queues:       queues,
+		currentIndex: -1,
+	}
+}
+
+func (r *roundRobinQueues) Peek() string {
+	return r.queues[r.currentIndex]
+}
+
+func (r *roundRobinQueues) Next() string {
+	r.currentIndex += 1
+	if r.currentIndex >= len(r.queues) {
+		r.currentIndex = 0
+	}
+
+	q := r.queues[r.currentIndex]
+	return q
+}
+
+func TestPrivateFunc_consumeWithRoundRobinQueues(t *testing.T) {
+	server1, err := machinery.NewServer(cnf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	w := server1.NewWorker("test-worker", 0)
+
+	// Assigning a getQueueHandler to `Next` method of roundRobinQueues
+	rr := NewRoundRobinQueues([]string{"custom-queue-0", "custom-queue-1", "custom-queue-2", "custom-queue-3"})
+	w.SetGetQueueHandler(rr.Next)
+
+	for i := 0; i < 5; i++ {
+		// the queue url of the broker should match the current queue url of roundRobin
+		// and thus queues are being utilized in round-robin fashion
+		qURL := testAWSSQSBroker.GetQueueURLForTest(w)
+		assert.Equal(t, qURL, testAWSSQSBroker.GetCustomQueueURL(rr.Peek()))
 	}
 }
