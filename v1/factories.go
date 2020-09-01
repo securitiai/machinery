@@ -58,6 +58,18 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 		}
 	}
 
+	if strings.HasPrefix(cnf.Broker, "redis+dlq://") {
+		parts := strings.Split(cnf.Broker, "redis+dlq://")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf(
+				"Redis DLQ broker connection string should be in format redis://host:port, instead got %s",
+				cnf.Broker,
+			)
+		}
+		brokers := strings.Split(parts[1], ",")
+		return redisbroker.NewGR_DLQ(cnf, brokers, 0), nil
+	}
+
 	if strings.HasPrefix(cnf.Broker, "redis+socket://") {
 		redisSocket, redisPassword, redisDB, err := ParseRedisSocketURL(cnf.Broker)
 		if err != nil {
