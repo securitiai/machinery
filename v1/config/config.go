@@ -137,6 +137,10 @@ type RedisConfig struct {
 	// Default: 15
 	ConnectTimeout int `yaml:"connect_timeout" envconfig:"REDIS_CONNECT_TIMEOUT"`
 
+	// VisibilityTimeout used in redis-dlq broker
+	// default to nil to use the overall visibility timeout for redis messages
+	VisibilityTimeout *int64 `yaml:"visibility_timeout" envconfig:"REDIS_VISIBILITY_TIMEOUT"`
+
 	// NormalTasksPollPeriod specifies the period in milliseconds when polling redis for normal tasks
 	// Default: 1000
 	NormalTasksPollPeriod int `yaml:"normal_tasks_poll_period" envconfig:"REDIS_NORMAL_TASKS_POLL_PERIOD"`
