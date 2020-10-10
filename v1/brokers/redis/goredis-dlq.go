@@ -319,13 +319,13 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	// If the task is not registered, we requeue it,
 	// there might be different workers for processing specific tasks
 	if !b.IsTaskRegistered(signature.Name) {
-		log.INFO.Printf("Task not registered with this worker. Requeing message: %s", delivery)
+		log.INFO.Printf("Task not registered with this worker. Requeing message: %+v", signature)
 
 		b.rclient.RPush(getQueueGR(b.GetConfig(), taskProcessor), delivery)
 		return nil
 	}
 
-	log.DEBUG.Printf("Received new message: %s", delivery)
+	log.DEBUG.Printf("Received new message: %+v", signature)
 
 	if err := taskProcessor.Process(signature); err != nil {
 		return err

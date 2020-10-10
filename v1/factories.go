@@ -62,7 +62,7 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 		parts := strings.Split(cnf.Broker, "redis+dlq://")
 		if len(parts) != 2 {
 			return nil, fmt.Errorf(
-				"Redis DLQ broker connection string should be in format redis://host:port, instead got %s",
+				"Redis DLQ broker connection string should be in format redis+dlq://host:port, instead got %s",
 				cnf.Broker,
 			)
 		}
