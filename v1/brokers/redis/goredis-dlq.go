@@ -128,9 +128,9 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 				//TODO: should this error be ignored?
 				if len(task) > 0 {
 					deliveries <- task
+				} else {
+					pool <- struct{}{}
 				}
-
-				pool <- struct{}{}
 			}
 		}
 	}()
@@ -166,7 +166,7 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 		}
 	}()
 
-	if err := b.consume(deliveries, concurrency, taskProcessor); err != nil {
+	if err := b.consume(deliveries, concurrency, taskProcessor, pool); err != nil {
 		return b.GetRetry(), err
 	}
 
@@ -259,16 +259,8 @@ func (b *BrokerGR_DLQ) GetDelayedTasks() ([]*tasks.Signature, error) {
 
 // consume takes delivered messages from the channel and manages a worker pool
 // to process tasks concurrently
-func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor) error {
-	errorsChan := make(chan error, concurrency*2)
-	pool := make(chan struct{}, concurrency)
-
-	// init pool for Worker tasks execution, as many slots as Worker concurrency param
-	go func() {
-		for i := 0; i < concurrency; i++ {
-			pool <- struct{}{}
-		}
-	}()
+func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
+	errorsChan := make(chan error)
 
 	for {
 		select {
@@ -277,10 +269,6 @@ func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskPr
 		case d, open := <-deliveries:
 			if !open {
 				return nil
-			}
-			if concurrency > 0 {
-				// get execution slot from pool (blocks until one is available)
-				<-pool
 			}
 
 			b.processingWG.Add(1)
