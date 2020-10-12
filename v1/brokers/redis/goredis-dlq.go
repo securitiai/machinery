@@ -316,6 +316,10 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	log.DEBUG.Printf("Received new message: %+v", signature)
 
 	if err := taskProcessor.Process(signature); err != nil {
+		// stop task deletion in case we want to send messages to dlq in redis
+		if err == errs.ErrStopTaskDeletion {
+			return nil
+		}
 		return err
 	}
 
@@ -338,35 +342,55 @@ func (b *BrokerGR_DLQ) nextTask(queue string) (result []byte, err error) {
 		}
 	}
 	pollPeriod := time.Duration(pollPeriodMilliseconds) * time.Millisecond
+	visibilityTimeout := *b.GetConfig().Redis.VisibilityTimeout
+	if visibilityTimeout <= 0 {
+		visibilityTimeout = 60
+	}
 	watchFunc := func(tx *redis.Tx) error {
-		items, err := b.rclient.BLPop(pollPeriod, queue).Result()
+		items, err := tx.LRange(queue, 0, 0).Result()
 		if err != nil {
 			return err
 		}
-		result = []byte(items[1])
-
 		// items[0] - the name of the key where an element was popped
 		// items[1] - the value of the popped element
-		if len(items) != 2 {
+		if len(items) != 1 {
 			return redis.Nil
 		}
-		gHashByte := sha256.Sum256([]byte(items[1]))
+		gHashByte := sha256.Sum256([]byte(items[0]))
 		gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
 
 		fields := map[string]interface{}{
-			hSetMessageKey: items[1],
+			hSetMessageKey: items[0],
 			hSetQueueKey:   queue,
 		}
-		if err := b.rclient.HMSet(gHash, fields).Err(); err != nil {
+		z := redis.Z{Score: float64(time.Now().Add(time.Duration(visibilityTimeout) * time.Second).Unix()), Member: gHash}
+		_, err = tx.TxPipelined(func(pipe redis.Pipeliner) error {
+			if err := pipe.HMSet(gHash, fields).Err(); err != nil {
+				return err
+			}
+			if err := pipe.ZAdd(messageVisibilitySet, z).Err(); err != nil {
+				return err
+			}
+			if err := pipe.LRem(queue, 1, items[0]).Err(); err != nil {
+				return err
+			}
+			return nil
+		})
+
+		if err != nil {
 			return err
 		}
-
-		z := redis.Z{Score: float64(time.Now().Add(1 * time.Minute).Unix()), Member: gHash}
-		return b.rclient.ZAdd(messageVisibilitySet, z).Err()
+		result = []byte(items[0])
+		return nil
 	}
 
 	err = b.rclient.Watch(watchFunc, queue)
 	if err != nil {
+		if err == redis.Nil {
+			// if no keys found then need to delay to stop constant bombarding
+			time.Sleep(pollPeriod)
+		}
+
 		return nil, err
 	}
 
@@ -386,10 +410,7 @@ func (b *BrokerGR_DLQ) nextDelayedTask(key string) (result []byte, err error) {
 	//	}
 	//}()
 
-	var (
-		items []string
-		reply interface{}
-	)
+	var items []string
 
 	pollPeriod := 500 // default poll period for delayed tasks
 	if b.GetConfig().Redis != nil {
@@ -419,25 +440,16 @@ func (b *BrokerGR_DLQ) nextDelayedTask(key string) (result []byte, err error) {
 			if len(items) != 1 {
 				return redis.Nil
 			}
-
-			return nil
-
+			_, err = tx.TxPipelined(func(pipe redis.Pipeliner) error {
+				return pipe.ZRem(key, items[0]).Err()
+			})
+			return err
 		}
 		if err = b.rclient.Watch(watchFunc, key); err != nil {
 			return
 		}
-
-		txpipe := b.rclient.TxPipeline()
-		txpipe.ZRem(key, items[0])
-		reply, err = txpipe.Exec()
-		if err != nil {
-			return
-		}
-
-		if reply != nil {
-			result = []byte(items[0])
-			break
-		}
+		result = []byte(items[0])
+		break
 	}
 
 	return
