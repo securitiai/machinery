@@ -43,20 +43,8 @@ type BrokerGR_DLQ struct {
 }
 
 // NewGR_DLQ creates new Broker instance
-func NewGR_DLQ(cnf *config.Config, addrs []string, db int) iface.Broker {
+func NewGR_DLQ(cnf *config.Config, addrs []string, password string, db int) iface.Broker {
 	b := &BrokerGR_DLQ{Broker: common.NewBroker(cnf)}
-	for i, addr := range addrs {
-		//go-redis URI can't handle db at the end of URI
-		addrs[i] = strings.Split(addr, "/")[0]
-	}
-
-	var password string
-	parts := strings.Split(addrs[0], "@")
-	if len(parts) == 2 {
-		// with passwrod
-		password = parts[0]
-		addrs[0] = parts[1]
-	}
 
 	ropt := &redis.UniversalOptions{
 		Addrs:    addrs,
@@ -64,6 +52,7 @@ func NewGR_DLQ(cnf *config.Config, addrs []string, db int) iface.Broker {
 		Password: password,
 	}
 	if cnf.Redis != nil {
+		// if we're specifying MasterName here, then we'll always connect to db 0, since provided db is ignored in cluster mode
 		ropt.MasterName = cnf.Redis.MasterName
 	}
 
