@@ -17,9 +17,9 @@ import (
 	redisbroker "github.com/RichardKnop/machinery/v1/brokers/redis"
 	sqsbroker "github.com/RichardKnop/machinery/v1/brokers/sqs"
 
-	mongobackend "github.com/RichardKnop/machinery/v1/backends/mongo"
 	amqpbackend "github.com/RichardKnop/machinery/v1/backends/amqp"
 	memcachebackend "github.com/RichardKnop/machinery/v1/backends/memcache"
+	mongobackend "github.com/RichardKnop/machinery/v1/backends/mongo"
 	redisbackend "github.com/RichardKnop/machinery/v1/backends/redis"
 )
 
@@ -187,6 +187,29 @@ func TestBrokerFactory(t *testing.T) {
 		)
 	}
 
+	// using redis-dlq
+	cnf = config.Config{
+		Broker:       "redis+dlq://localhost:6379/1",
+		Redis:        &config.RedisConfig{},
+		DefaultQueue: "machinery_tasks",
+	}
+
+	actual, err = machinery.BrokerFactory(&cnf)
+	if assert.NoError(t, err) {
+		_, isRedisBroker := actual.(*redisbroker.BrokerGR_DLQ)
+		assert.True(
+			t,
+			isRedisBroker,
+			"Broker should be instance of *brokers.RedisDLQBroker",
+		)
+		expected := redisbroker.NewGR_DLQ(&cnf, []string{"localhost:6379"}, "", 1)
+		assert.True(
+			t,
+			brokerEqual(actual, expected),
+			fmt.Sprintf("conn = %+v, want %+v", actual, expected),
+		)
+	}
+
 	// 3) AWS SQS
 	cnf = config.Config{
 		Broker:       "https://sqs.us-east-2.amazonaws.com/123456789012",
@@ -227,6 +250,7 @@ func TestBrokerFactory(t *testing.T) {
 func brokerEqual(x, y brokeriface.Broker) bool {
 	// unset Broker.stopChan and Broker.retryStopChan to nil before using
 	// reflect.DeepEqual() as the objects will have a different address
+	// redisGR brokers also have objects with different addresses. Set them to nil values if they exist.
 	rx := reflect.ValueOf(x).Elem()
 	rxf := rx.FieldByName("stopChan")
 	rxf = reflect.NewAt(rxf.Type(), unsafe.Pointer(rxf.UnsafeAddr())).Elem()
@@ -234,6 +258,10 @@ func brokerEqual(x, y brokeriface.Broker) bool {
 	rxf = rx.FieldByName("retryStopChan")
 	rxf = reflect.NewAt(rxf.Type(), unsafe.Pointer(rxf.UnsafeAddr())).Elem()
 	rxf.Set(reflect.Zero(rxf.Type()))
+	if rxf := rx.FieldByName("rclient"); rxf.IsValid() {
+		rxf = reflect.NewAt(rxf.Type(), unsafe.Pointer(rxf.UnsafeAddr())).Elem()
+		rxf.Set(reflect.Zero(rxf.Type()))
+	}
 
 	ry := reflect.ValueOf(y).Elem()
 	ryf := ry.FieldByName("stopChan")
@@ -242,6 +270,10 @@ func brokerEqual(x, y brokeriface.Broker) bool {
 	ryf = ry.FieldByName("retryStopChan")
 	ryf = reflect.NewAt(ryf.Type(), unsafe.Pointer(ryf.UnsafeAddr())).Elem()
 	ryf.Set(reflect.Zero(ryf.Type()))
+	if ryf := ry.FieldByName("rclient"); ryf.IsValid() {
+		ryf = reflect.NewAt(ryf.Type(), unsafe.Pointer(ryf.UnsafeAddr())).Elem()
+		ryf.Set(reflect.Zero(ryf.Type()))
+	}
 
 	return reflect.DeepEqual(x, y)
 }
@@ -469,4 +501,87 @@ func TestParseRedisSocketURL(t *testing.T) {
 		assert.Equal(t, "pwd", pwd)
 		assert.Equal(t, 2, db)
 	}
+}
+
+func TestParseRedisDlqURL(t *testing.T) {
+	t.Parallel()
+
+	var (
+		hosts    []string
+		pwd, url string
+		db       int
+		err      error
+	)
+
+	url = "non_redisdlq://localhost:6379"
+	_, _, _, err = machinery.ParseRedisDlqURL(url)
+	assert.Error(t, err, "No redis scheme found")
+
+	url = "redis+dlq:/"
+	_, _, _, err = machinery.ParseRedisDlqURL(url)
+	assert.Error(t, err, "No redis scheme found")
+
+	url = "redis+dlq://localhost:6379"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "localhost:6379", hosts[0])
+		assert.Equal(t, "", pwd)
+		assert.Equal(t, 0, db)
+	}
+
+	url = "redis+dlq://pwd@localhost:6379"
+	hosts, pwd, db, _ = machinery.ParseRedisDlqURL(url)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "localhost:6379", hosts[0])
+		assert.Equal(t, "pwd", pwd)
+		assert.Equal(t, 0, db)
+	}
+
+	url = "redis+dlq://pwd@localhost:6379/2"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "localhost:6379", hosts[0])
+		assert.Equal(t, "pwd", pwd)
+		assert.Equal(t, 2, db)
+	}
+
+	url = "redis+dlq://localhost:6379,localhost:6380"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "localhost:6379", hosts[0])
+		assert.Equal(t, "localhost:6380", hosts[1])
+		assert.Equal(t, "", pwd)
+		assert.Equal(t, 0, db)
+	}
+
+	url = "redis+dlq://pwd@localhost:6379,pwd@localhost:6380"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "localhost:6379", hosts[0])
+		assert.Equal(t, "localhost:6380", hosts[1])
+		assert.Equal(t, "pwd", pwd)
+		assert.Equal(t, 0, db)
+	}
+
+	url = "redis+dlq://localhost:6379/1,localhost:6380/1"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "localhost:6379", hosts[0])
+		assert.Equal(t, "localhost:6380", hosts[1])
+		assert.Equal(t, "", pwd)
+		assert.Equal(t, 1, db)
+	}
+
+	// passing no password is the same as passing an empty string password.
+	url = "redis+dlq://pwd@localhost:6379,localhost:6380"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	assert.Error(t, err, "multiple passwords passed in redis+dlq URI. Expected one, got 2")
+
+	url = "redis+dlq://pwd@localhost:6379,pwd1@localhost:6380"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	assert.Error(t, err, "multiple passwords passed in redis+dlq URI. Expected one, got 2")
+
+	url = "redis+dlq://localhost:6379,localhost:6380/3"
+	hosts, pwd, db, err = machinery.ParseRedisDlqURL(url)
+	assert.Error(t, err, "multiple dbs passed in redis+dlq URI. Expected one, got 2")
 }

@@ -59,15 +59,11 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 	}
 
 	if strings.HasPrefix(cnf.Broker, "redis+dlq://") {
-		parts := strings.Split(cnf.Broker, "redis+dlq://")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf(
-				"Redis DLQ broker connection string should be in format redis+dlq://host:port, instead got %s",
-				cnf.Broker,
-			)
+		redisAddrs, redisPassword, redisDB, err := ParseRedisDlqURL(cnf.Broker)
+		if err != nil {
+			return nil, err
 		}
-		brokers := strings.Split(parts[1], ",")
-		return redisbroker.NewGR_DLQ(cnf, brokers, 0), nil
+		return redisbroker.NewGR_DLQ(cnf, redisAddrs, redisPassword, redisDB), nil
 	}
 
 	if strings.HasPrefix(cnf.Broker, "redis+socket://") {
@@ -257,6 +253,76 @@ func ParseRedisSocketURL(url string) (path, password string, db int, err error) 
 	parts = strings.SplitN(remainder, "/", 2)
 	if len(parts) == 2 {
 		db, _ = strconv.Atoi(parts[1])
+	}
+
+	return
+}
+
+// ParseRedisDURL extracts Redis connection options from a URL with the
+// redis+dlq:// scheme. This scheme is custom, and requires support from
+// the application side as well for DLQ features such as removing messages
+// which have surpasses visibilityTImeout. The broker merely sets message
+// metadata in Redis when extracting tasks for processing.
+func ParseRedisDlqURL(url string) (addrs []string, password string, db int, err error) {
+	parts := strings.Split(url, "redis+dlq://")
+	if parts[0] != "" {
+		err = errors.New("No redis scheme found")
+		return
+	}
+	if len(parts) != 2 {
+		err = fmt.Errorf(
+			"Redis DLQ broker connection string should be in format redis+dlq://host:port, instead got %s",
+			url)
+		return
+	}
+
+	// redis+dlq://127.0.0.1:5672",
+
+	addrs = strings.Split(parts[1], ",")
+	dbs := make(map[int]struct{})
+	passwords := make(map[string]struct{})
+	for i := range addrs {
+		// removing possible password from address
+		parts := strings.SplitN(addrs[i], "@", 2)
+		if len(parts) == 1 {
+			passwords[""] = struct{}{}
+		} else {
+			passwords[parts[0]] = struct{}{}
+			addrs[i] = parts[1]
+		}
+
+		// go-redis URI can't handle db at the end of URI, so we're extracting that here
+		// note, that we can pass multiple addresses to connect in cluster/sentinel mode, but we can only pass one db
+		parts = strings.SplitN(addrs[i], "/", 2)
+		addrs[i] = parts[0]
+		if len(parts) == 1 {
+			dbs[0] = struct{}{}
+		} else {
+			db, err = strconv.Atoi(parts[1])
+			if err != nil {
+				err = fmt.Errorf( "could not extract db from redis+dlq URI: %s", err.Error())
+				return
+			}
+			dbs[db] = struct{}{}
+		}
+	}
+
+	if len(passwords) > 1 {
+		err = fmt.Errorf("multiple passwords passed in redis+dlq URI. Expected one, got %d", len(passwords))
+		return
+	}
+
+	if len(dbs) > 1 {
+		err = fmt.Errorf("multiple dbs passed in redis+dlq URI. Expected one, got %d", len(dbs))
+		return
+	}
+
+	for k := range dbs {
+		db = k
+	}
+
+	for pass := range passwords {
+		password = pass
 	}
 
 	return
