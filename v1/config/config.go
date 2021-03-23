@@ -137,6 +137,27 @@ type RedisConfig struct {
 	// Default: 15
 	ConnectTimeout int `yaml:"connect_timeout" envconfig:"REDIS_CONNECT_TIMEOUT"`
 
+	// Minimum number of idle connections which is useful when establishing
+	// new connection is slow.
+	// Used in redis-dlq broker
+	MinIdleConns int `yaml:"min_idle_conns" envconfig:"REDIS_MIN_IDLE_CONNS"`
+
+	// Minimum backoff between each retry.
+	// Used in redis-dlq broker
+	// Default: 8 * time.Millisecond
+	MinRetryBackoff int `yaml:"min_retry_backoff" envconfig:"REDIS_MIN_RETRY_BACKOFF"`
+
+	// Maximum backoff between each retry.
+	// Used in redis-dlq broker
+	// Default: 512 * time.Millisecond
+	MaxRetryBackoff int `yaml:"max_retry_backoff" envconfig:"REDIS_MAX_RETRY_BACKOFF"`
+
+	// Default: 0 (no retries)
+	MaxRetries int `yaml:"max_retries" envconfig:"REDIS_MAX_RETRIES"`
+
+	// Default: 0 (pool size defaults to 10 * NumCpus)
+	PoolSize int `yaml:"pool_size" envconfig:"REDIS_POOL_SIZE"`
+
 	// VisibilityTimeout used in redis-dlq broker
 	// default to nil to use the overall visibility timeout for redis messages
 	VisibilityTimeout *int64 `yaml:"visibility_timeout" envconfig:"REDIS_VISIBILITY_TIMEOUT"`
