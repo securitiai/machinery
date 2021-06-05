@@ -59,6 +59,7 @@ func NewGR_DLQ(cnf *config.Config, addrs []string, password string, db int) ifac
 		MaxRetryBackoff: time.Duration(cnf.Redis.MaxRetryBackoff) * time.Millisecond,
 		MaxRetries: cnf.Redis.MaxRetries,
 		PoolSize: cnf.Redis.PoolSize,
+		TLSConfig: cnf.TLSConfig,
 	}
 	if cnf.Redis != nil {
 		// if we're specifying MasterName here, then we'll always connect to db 0, since provided db is ignored in cluster mode
