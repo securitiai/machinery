@@ -299,6 +299,7 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 		return errs.NewErrCouldNotUnmarshaTaskSignature(delivery, err)
 	}
 	// propagating hash UUID for possible application usage, for example, refreshing visibility
+	oldUuid := signature.UUID
 	gHashByte := sha256.Sum256(delivery)
 	gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
 	signature.UUID = gHash
@@ -313,6 +314,7 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	}
 
 	log.DEBUG.Printf("Received new message: %+v", signature)
+	log.INFO.Printf("Processing task. Old UUID: %s New UUID: %s", oldUuid, signature.UUID)
 
 	if err := taskProcessor.Process(signature); err != nil {
 		// stop task deletion in case we want to send messages to dlq in redis
