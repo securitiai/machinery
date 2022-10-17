@@ -1,4 +1,4 @@
-package sqs
+package sqsv2
 
 import (
 	"context"
@@ -15,16 +15,39 @@ import (
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/sqs/sqsiface"
 
-	awssqs "github.com/aws/aws-sdk-go/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 )
 
 const (
 	maxAWSSQSDelay = time.Minute * 15 // Max supported SQS delay is 15 min: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html
 )
+
+type SQSAPIV2 interface {
+	AddPermission(ctx context.Context, params *awssqs.AddPermissionInput, optFns ...func(*awssqs.Options)) (*awssqs.AddPermissionOutput, error)
+	ChangeMessageVisibility(ctx context.Context, params *awssqs.ChangeMessageVisibilityInput, optFns ...func(*awssqs.Options)) (*awssqs.ChangeMessageVisibilityOutput, error)
+	ChangeMessageVisibilityBatch(ctx context.Context, params *awssqs.ChangeMessageVisibilityBatchInput, optFns ...func(*awssqs.Options)) (*awssqs.ChangeMessageVisibilityBatchOutput, error)
+	CreateQueue(ctx context.Context, params *awssqs.CreateQueueInput, optFns ...func(*awssqs.Options)) (*awssqs.CreateQueueOutput, error)
+	DeleteMessage(ctx context.Context, params *awssqs.DeleteMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.DeleteMessageOutput, error)
+	DeleteMessageBatch(ctx context.Context, params *awssqs.DeleteMessageBatchInput, optFns ...func(*awssqs.Options)) (*awssqs.DeleteMessageBatchOutput, error)
+	DeleteQueue(ctx context.Context, params *awssqs.DeleteQueueInput, optFns ...func(*awssqs.Options)) (*awssqs.DeleteQueueOutput, error)
+	GetQueueAttributes(ctx context.Context, params *awssqs.GetQueueAttributesInput, optFns ...func(*awssqs.Options)) (*awssqs.GetQueueAttributesOutput, error)
+	GetQueueUrl(ctx context.Context, params *awssqs.GetQueueUrlInput, optFns ...func(*awssqs.Options)) (*awssqs.GetQueueUrlOutput, error)
+	ListDeadLetterSourceQueues(ctx context.Context, params *awssqs.ListDeadLetterSourceQueuesInput, optFns ...func(*awssqs.Options)) (*awssqs.ListDeadLetterSourceQueuesOutput, error)
+	ListQueueTags(ctx context.Context, params *awssqs.ListQueueTagsInput, optFns ...func(*awssqs.Options)) (*awssqs.ListQueueTagsOutput, error)
+	ListQueues(ctx context.Context, params *awssqs.ListQueuesInput, optFns ...func(*awssqs.Options)) (*awssqs.ListQueuesOutput, error)
+	PurgeQueue(ctx context.Context, params *awssqs.PurgeQueueInput, optFns ...func(*awssqs.Options)) (*awssqs.PurgeQueueOutput, error)
+	ReceiveMessage(ctx context.Context, params *awssqs.ReceiveMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.ReceiveMessageOutput, error)
+	RemovePermission(ctx context.Context, params *awssqs.RemovePermissionInput, optFns ...func(*awssqs.Options)) (*awssqs.RemovePermissionOutput, error)
+	SendMessage(ctx context.Context, params *awssqs.SendMessageInput, optFns ...func(*awssqs.Options)) (*awssqs.SendMessageOutput, error)
+	SendMessageBatch(ctx context.Context, params *awssqs.SendMessageBatchInput, optFns ...func(*awssqs.Options)) (*awssqs.SendMessageBatchOutput, error)
+	SetQueueAttributes(ctx context.Context, params *awssqs.SetQueueAttributesInput, optFns ...func(*awssqs.Options)) (*awssqs.SetQueueAttributesOutput, error)
+	TagQueue(ctx context.Context, params *awssqs.TagQueueInput, optFns ...func(*awssqs.Options)) (*awssqs.TagQueueOutput, error)
+	UntagQueue(ctx context.Context, params *awssqs.UntagQueueInput, optFns ...func(*awssqs.Options)) (*awssqs.UntagQueueOutput, error)
+}
 
 // Broker represents a AWS SQS broker
 // There are examples on: https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/sqs-example-create-queue.html
@@ -33,8 +56,8 @@ type Broker struct {
 	processingWG      sync.WaitGroup // use wait group to make sure task processing completes on interrupt signal
 	receivingWG       sync.WaitGroup
 	stopReceivingChan chan int
-	sess              *session.Session
-	service           sqsiface.SQSAPI
+	config            aws.Config
+	service           SQSAPIV2
 }
 
 // ReceivedMessages contains the queue name that the received message was fetched from so that we can delete the message later
@@ -48,17 +71,16 @@ type ReceivedMessages struct {
 // New creates new Broker instance
 func New(cnf *config.Config) iface.Broker {
 	b := &Broker{Broker: common.NewBroker(cnf)}
-	if cnf.SQS != nil && cnf.SQS.ClientV1 != nil {
+	if cnf.SQS != nil && cnf.SQS.ClientV2 != nil {
 		// Use provided *SQS client
-		b.service = cnf.SQS.ClientV1
+		b.service = cnf.SQS.ClientV2
 	} else {
 		// Initialize a session that the SDK will use to load credentials from the shared credentials file, ~/.aws/credentials.
 		// See details on: https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html
 		// Also, env AWS_REGION is also required
-		b.sess = session.Must(session.NewSessionWithOptions(session.Options{
-			SharedConfigState: session.SharedConfigEnable,
-		}))
-		b.service = awssqs.New(b.sess)
+		cfg, _ := awscfg.LoadDefaultConfig(context.TODO())
+		b.config = cfg
+		b.service = awssqs.NewFromConfig(cfg)
 	}
 
 	return b
@@ -164,11 +186,11 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 			if delay > maxAWSSQSDelay {
 				return errors.New("Max AWS SQS delay exceeded")
 			}
-			MsgInput.DelaySeconds = aws.Int64(int64(delay.Seconds()))
+			MsgInput.DelaySeconds = int32(delay.Seconds())
 		}
 	}
 
-	result, err := b.service.SendMessageWithContext(ctx, MsgInput)
+	result, err := b.service.SendMessage(ctx, MsgInput)
 
 	if err != nil {
 		log.ERROR.Printf("Error when sending a message: %v", err)
@@ -201,7 +223,7 @@ func (b *Broker) consumeOne(sqsReceivedMsgs *ReceivedMessages, taskProcessor ifa
 	delivery := sqsReceivedMsgs.Delivery
 	if len(delivery.Messages) == 0 {
 		log.ERROR.Printf("received an empty message, the delivery was %v", delivery)
-		return errors.New("received empty message, the delivery is " + delivery.GoString())
+		return fmt.Errorf("received empty message, the delivery is %+v", delivery)
 	}
 
 	sig := new(tasks.Signature)
@@ -252,7 +274,7 @@ func (b *Broker) consumeOne(sqsReceivedMsgs *ReceivedMessages, taskProcessor ifa
 func (b *Broker) deleteOne(delivery *ReceivedMessages) error {
 	qURL := delivery.queue
 
-	_, err := b.service.DeleteMessage(&awssqs.DeleteMessageInput{
+	_, err := b.service.DeleteMessage(context.TODO(), &awssqs.DeleteMessageInput{
 		QueueUrl:      qURL,
 		ReceiptHandle: delivery.Delivery.Messages[0].ReceiptHandle,
 	})
@@ -279,20 +301,20 @@ func (b *Broker) receiveMessage(qURL *string) (*awssqs.ReceiveMessageOutput, err
 		waitTimeSeconds = 0
 	}
 	input := &awssqs.ReceiveMessageInput{
-		AttributeNames: []*string{
-			aws.String(awssqs.MessageSystemAttributeNameSentTimestamp),
+		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeName(types.MessageSystemAttributeNameSentTimestamp),
 		},
-		MessageAttributeNames: []*string{
-			aws.String(awssqs.QueueAttributeNameAll),
+		MessageAttributeNames: []string{
+			string(types.QueueAttributeNameAll),
 		},
 		QueueUrl:            qURL,
-		MaxNumberOfMessages: aws.Int64(1),
-		WaitTimeSeconds:     aws.Int64(int64(waitTimeSeconds)),
+		MaxNumberOfMessages: 1,
+		WaitTimeSeconds:     int32(waitTimeSeconds),
 	}
 	if visibilityTimeout != nil {
-		input.VisibilityTimeout = aws.Int64(int64(*visibilityTimeout))
+		input.VisibilityTimeout = int32(*visibilityTimeout)
 	}
-	result, err := b.service.ReceiveMessage(input)
+	result, err := b.service.ReceiveMessage(context.TODO(), input)
 	if err != nil {
 		return nil, err
 	}
