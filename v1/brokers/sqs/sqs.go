@@ -48,9 +48,9 @@ type ReceivedMessages struct {
 // New creates new Broker instance
 func New(cnf *config.Config) iface.Broker {
 	b := &Broker{Broker: common.NewBroker(cnf)}
-	if cnf.SQS != nil && cnf.SQS.ClientV1 != nil {
+	if cnf.SQS != nil && cnf.SQS.Client != nil {
 		// Use provided *SQS client
-		b.service = cnf.SQS.ClientV1
+		b.service = cnf.SQS.Client
 	} else {
 		// Initialize a session that the SDK will use to load credentials from the shared credentials file, ~/.aws/credentials.
 		// See details on: https://docs.aws.amazon.com/sdk-for-go/v1/developer-guide/configuring-sdk.html
