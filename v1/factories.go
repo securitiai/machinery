@@ -16,6 +16,7 @@ import (
 	brokeriface "github.com/RichardKnop/machinery/v1/brokers/iface"
 	redisbroker "github.com/RichardKnop/machinery/v1/brokers/redis"
 	sqsbroker "github.com/RichardKnop/machinery/v1/brokers/sqs"
+	sqsbrokerv2 "github.com/RichardKnop/machinery/v1/brokers/sqsv2"
 
 	amqpbackend "github.com/RichardKnop/machinery/v1/backends/amqp"
 	dynamobackend "github.com/RichardKnop/machinery/v1/backends/dynamodb"
@@ -85,11 +86,19 @@ func BrokerFactory(cnf *config.Config) (brokeriface.Broker, error) {
 
 		//even when disabling strict SQS naming check, make sure its still a valid http URL
 		if strings.HasPrefix(cnf.Broker, "https://") || strings.HasPrefix(cnf.Broker, "http://") {
-			return sqsbroker.New(cnf), nil
+			if cnf.SQS.ClientV2 != nil {
+				return sqsbrokerv2.New(cnf), nil
+			} else {
+				return sqsbroker.New(cnf), nil
+			}
 		}
 	} else {
 		if strings.HasPrefix(cnf.Broker, "https://sqs") {
-			return sqsbroker.New(cnf), nil
+			if cnf.SQS.ClientV2 != nil {
+				return sqsbrokerv2.New(cnf), nil
+			} else {
+				return sqsbroker.New(cnf), nil
+			}
 		}
 	}
 
@@ -300,7 +309,7 @@ func ParseRedisDlqURL(url string) (addrs []string, password string, db int, err 
 		} else {
 			db, err = strconv.Atoi(parts[1])
 			if err != nil {
-				err = fmt.Errorf( "could not extract db from redis+dlq URI: %s", err.Error())
+				err = fmt.Errorf("could not extract db from redis+dlq URI: %s", err.Error())
 				return
 			}
 			dbs[db] = struct{}{}
