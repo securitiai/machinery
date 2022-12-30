@@ -68,6 +68,7 @@ type Signature struct {
 	// IgnoreWhenTaskNotRegistered auto removes the request when there is no handeler available
 	// When this is true a task with no handler will be ignored and not placed back in the queue
 	IgnoreWhenTaskNotRegistered bool
+	Attributes map[string]*string
 }
 
 // NewSignature creates a new task signature

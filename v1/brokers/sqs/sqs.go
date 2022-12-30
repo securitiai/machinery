@@ -232,6 +232,8 @@ func (b *Broker) consumeOne(sqsReceivedMsgs *ReceivedMessages, taskProcessor ifa
 		queueName := b.urlToQueue(*(sqsReceivedMsgs.queue))
 		sig.RoutingKey = *queueName
 	}
+	
+	sig.Attributes = delivery.Messages[0].Attributes
 
 	err := taskProcessor.Process(sig)
 	if err != nil {
@@ -280,7 +282,7 @@ func (b *Broker) receiveMessage(qURL *string) (*awssqs.ReceiveMessageOutput, err
 	}
 	input := &awssqs.ReceiveMessageInput{
 		AttributeNames: []*string{
-			aws.String(awssqs.MessageSystemAttributeNameSentTimestamp),
+			aws.String(awssqs.QueueAttributeNameAll),
 		},
 		MessageAttributeNames: []*string{
 			aws.String(awssqs.QueueAttributeNameAll),
