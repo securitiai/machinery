@@ -24,6 +24,8 @@ import (
 
 const (
 	maxAWSSQSDelay = time.Minute * 15 // Max supported SQS delay is 15 min: https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_SendMessage.html
+	// Returns all values, A list of attributes that need to be returned along with each message
+	messageSystemAttributeNameAll = "All"
 )
 
 // Broker represents a AWS SQS broker
@@ -282,7 +284,7 @@ func (b *Broker) receiveMessage(qURL *string) (*awssqs.ReceiveMessageOutput, err
 	}
 	input := &awssqs.ReceiveMessageInput{
 		AttributeNames: []*string{
-			aws.String(awssqs.QueueAttributeNameAll),
+			aws.String(messageSystemAttributeNameAll),
 		},
 		MessageAttributeNames: []*string{
 			aws.String(awssqs.QueueAttributeNameAll),
