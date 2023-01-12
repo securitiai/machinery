@@ -62,12 +62,15 @@ type Signature struct {
 	BrokerMessageGroupId string
 	//ReceiptHandle of SQS Message
 	SQSReceiptHandle string
-	// StopTaskDeletionOnError used with sqs when we want to send failed messages to dlq, 
-  // and don't want machinery to delete from source queue
+	// StopTaskDeletionOnError used with sqs when we want to send failed messages to dlq,
+	// and don't want machinery to delete from source queue
 	StopTaskDeletionOnError bool
 	// IgnoreWhenTaskNotRegistered auto removes the request when there is no handeler available
 	// When this is true a task with no handler will be ignored and not placed back in the queue
 	IgnoreWhenTaskNotRegistered bool
+	// A map of the attributes requested in ReceiveMessage, and their respective values. e.g. ApproximateReceiveCount
+	// for SQS, check https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_Message.html#API_Message_Contents
+	Attributes map[string]*string
 }
 
 // NewSignature creates a new task signature
