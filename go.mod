@@ -13,9 +13,7 @@ require (
 	github.com/btcsuite/btcutil v1.0.2
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/go-redis/redis v6.15.6+incompatible
-	github.com/go-stack/stack v1.8.0 // indirect
 	github.com/golang/groupcache v0.0.0-20191002201903-404acd9df4cc // indirect
-	github.com/golang/snappy v0.0.1 // indirect
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/google/uuid v1.1.1
 	github.com/jstemmer/go-junit-report v0.9.1 // indirect
@@ -23,22 +21,16 @@ require (
 	github.com/onsi/ginkgo v1.10.0 // indirect
 	github.com/onsi/gomega v1.7.0 // indirect
 	github.com/opentracing/opentracing-go v1.1.0
-	github.com/pkg/errors v0.8.1
+	github.com/pkg/errors v0.9.1
 	github.com/streadway/amqp v0.0.0-20190827072141-edfb9018d271
-	github.com/stretchr/testify v1.3.0
+	github.com/stretchr/testify v1.6.1
 	github.com/stvp/tempredis v0.0.0-20181119212430-b82af8480203 // indirect
-	github.com/tidwall/pretty v0.0.0-20180105212114-65a9db5fad51 // indirect
 	github.com/urfave/cli v1.22.1
-	github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c // indirect
-	github.com/xdg/stringprep v1.0.0 // indirect
-	go.mongodb.org/mongo-driver v1.1.2
+	go.mongodb.org/mongo-driver v1.11.6
 	go.opencensus.io v0.22.1 // indirect
 	golang.org/x/exp v0.0.0-20191002040644-a1355ae1e2c3 // indirect
 	golang.org/x/lint v0.0.0-20190930215403-16217165b5de // indirect
-	golang.org/x/net v0.0.0-20191007182048-72f939374954 // indirect
-	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e // indirect
-	golang.org/x/sys v0.0.0-20191008105621-543471e840be // indirect
-	golang.org/x/tools v0.0.0-20191007185444-6536af71d98a // indirect
+	golang.org/x/net v0.9.0 // indirect
 	google.golang.org/api v0.11.0 // indirect
 	google.golang.org/appengine v1.6.5 // indirect
 	google.golang.org/genproto v0.0.0-20191007204434-a023cd5227bd // indirect
