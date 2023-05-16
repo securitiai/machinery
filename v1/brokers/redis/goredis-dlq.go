@@ -20,6 +20,7 @@ import (
 	"github.com/RichardKnop/redsync"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/go-redis/redis"
+	"github.com/spf13/cast"
 )
 
 const (
@@ -320,17 +321,14 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	}
 	val := stringCmd.Val()
 
-	receiveCount := val
-	if val == "" {
-		receiveCount = "1"
-		boolCmd := b.rclient.HSet(gHash, hSetRetryKey, 1)
-		if err := boolCmd.Err(); err != nil {
-			log.ERROR.Printf("Could not set retry count for message in HSet. Error: %s", err.Error())
-		}
-	}
+	receiveCount := cast.ToInt(val)
+	//increment before adding to signature since ApproximateReceiveCount is the number of times a message is received, whereas the value stored in hset represents the number of retries which is one less than ApproximateReceiveCount
+	receiveCount++
+
+	receiveCountString := cast.ToString(receiveCount)
 
 	signature.Attributes = map[string]*string{}
-	signature.Attributes["ApproximateReceiveCount"] = &receiveCount
+	signature.Attributes["ApproximateReceiveCount"] = &receiveCountString
 
 	log.DEBUG.Printf("Received new message: %+v", signature)
 	log.INFO.Printf("Processing task. Old UUID: %s New UUID: %s", oldUuid, signature.UUID)
