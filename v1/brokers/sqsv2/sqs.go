@@ -255,6 +255,13 @@ func (b *Broker) consumeOne(sqsReceivedMsgs *ReceivedMessages, taskProcessor ifa
 		sig.RoutingKey = *queueName
 	}
 
+	// Port changes from https://github.com/securitiai/machinery/pull/11 to sqs v2
+	var attrs map[string]*string
+	for key, val := range delivery.Messages[0].Attributes {
+		attrs[key] = aws.String(val)
+	}
+	sig.Attributes = attrs
+
 	err := taskProcessor.Process(sig)
 	if err != nil {
 		// stop task deletion in case we want to send messages to dlq in sqs
@@ -302,7 +309,7 @@ func (b *Broker) receiveMessage(qURL *string) (*awssqs.ReceiveMessageOutput, err
 	}
 	input := &awssqs.ReceiveMessageInput{
 		AttributeNames: []types.QueueAttributeName{
-			types.QueueAttributeName(types.MessageSystemAttributeNameSentTimestamp),
+			types.QueueAttributeNameAll,
 		},
 		MessageAttributeNames: []string{
 			string(types.QueueAttributeNameAll),
