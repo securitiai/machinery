@@ -20,12 +20,14 @@ import (
 	"github.com/RichardKnop/redsync"
 	"github.com/btcsuite/btcutil/base58"
 	"github.com/go-redis/redis"
+	"github.com/spf13/cast"
 )
 
 const (
 	messageVisibilitySet = "message-visibility-set"
 	hSetMessageKey       = "message"
 	hSetQueueKey         = "queue"
+	hSetRetryKey         = "visibility_counter"
 	taskPrefix           = "task_%s"
 )
 
@@ -47,19 +49,19 @@ func NewGR_DLQ(cnf *config.Config, addrs []string, password string, db int) ifac
 	b := &BrokerGR_DLQ{Broker: common.NewBroker(cnf)}
 
 	ropt := &redis.UniversalOptions{
-		Addrs:    addrs,
-		DB:       db,
-		Password: password,
-		ReadTimeout: time.Duration(cnf.Redis.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(cnf.Redis.WriteTimeout) * time.Second,
-		DialTimeout: time.Duration(cnf.Redis.ConnectTimeout) * time.Second,
-		IdleTimeout: time.Duration(cnf.Redis.IdleTimeout) * time.Second,
-		MinIdleConns: cnf.Redis.MinIdleConns,
+		Addrs:           addrs,
+		DB:              db,
+		Password:        password,
+		ReadTimeout:     time.Duration(cnf.Redis.ReadTimeout) * time.Second,
+		WriteTimeout:    time.Duration(cnf.Redis.WriteTimeout) * time.Second,
+		DialTimeout:     time.Duration(cnf.Redis.ConnectTimeout) * time.Second,
+		IdleTimeout:     time.Duration(cnf.Redis.IdleTimeout) * time.Second,
+		MinIdleConns:    cnf.Redis.MinIdleConns,
 		MinRetryBackoff: time.Duration(cnf.Redis.MinRetryBackoff) * time.Millisecond,
 		MaxRetryBackoff: time.Duration(cnf.Redis.MaxRetryBackoff) * time.Millisecond,
-		MaxRetries: cnf.Redis.MaxRetries,
-		PoolSize: cnf.Redis.PoolSize,
-		TLSConfig: cnf.TLSConfig,
+		MaxRetries:      cnf.Redis.MaxRetries,
+		PoolSize:        cnf.Redis.PoolSize,
+		TLSConfig:       cnf.TLSConfig,
 	}
 	if cnf.Redis != nil {
 		// if we're specifying MasterName here, then we'll always connect to db 0, since provided db is ignored in cluster mode
@@ -312,6 +314,21 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 		b.rclient.RPush(getQueueGR(b.GetConfig(), taskProcessor), delivery)
 		return nil
 	}
+
+	stringCmd := b.rclient.HGet(gHash, hSetRetryKey)
+	if err := stringCmd.Err(); err != nil {
+		log.ERROR.Printf("Could not retrieve message keys from redis. Error: %s", err.Error())
+	}
+	val := stringCmd.Val()
+
+	receiveCount := cast.ToInt(val)
+	//increment before adding to signature since ApproximateReceiveCount is the number of times a message is received, whereas the value stored in hset represents the number of retries which is one less than ApproximateReceiveCount
+	receiveCount++
+
+	receiveCountString := cast.ToString(receiveCount)
+
+	signature.Attributes = map[string]*string{}
+	signature.Attributes["ApproximateReceiveCount"] = &receiveCountString
 
 	log.DEBUG.Printf("Received new message: %+v", signature)
 	log.INFO.Printf("Processing task. Old UUID: %s New UUID: %s", oldUuid, signature.UUID)
