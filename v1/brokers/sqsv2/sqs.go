@@ -256,7 +256,7 @@ func (b *Broker) consumeOne(sqsReceivedMsgs *ReceivedMessages, taskProcessor ifa
 	}
 
 	// Port changes from https://github.com/securitiai/machinery/pull/11 to sqs v2
-	var attrs map[string]*string
+	var attrs = map[string]*string{}
 	for key, val := range delivery.Messages[0].Attributes {
 		attrs[key] = aws.String(val)
 	}
