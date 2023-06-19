@@ -317,7 +317,7 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 
 	stringCmd := b.rclient.HGet(gHash, hSetRetryKey)
 	if err := stringCmd.Err(); err != nil {
-		log.ERROR.Printf("Could not retrieve message keys from redis. Error: %s", err.Error())
+		log.DEBUG.Printf("Could not retrieve message keys from redis. Error: %s", err.Error())
 	}
 	val := stringCmd.Val()
 
