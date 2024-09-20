@@ -306,12 +306,13 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
 	signature.UUID = gHash
 
-	// If the task is not registered, we requeue it,
-	// there might be different workers for processing specific tasks
 	if !b.IsTaskRegistered(signature.Name) {
-		log.INFO.Printf("Task not registered with this worker. Requeing message: %+v", signature)
-
-		b.rclient.RPush(getQueueGR(b.GetConfig(), taskProcessor), delivery)
+		// deleting sig so that this isn't picked up by redis-reaper later
+		err := b.deleteOne(signature)
+		if err != nil {
+			log.INFO.Printf("Couldn't delete signature for task, error: %v", err)
+			return err
+		}
 		return nil
 	}
 

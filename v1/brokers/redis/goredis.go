@@ -299,12 +299,10 @@ func (b *BrokerGR) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor
 		return errs.NewErrCouldNotUnmarshaTaskSignature(delivery, err)
 	}
 
-	// If the task is not registered, we requeue it,
-	// there might be different workers for processing specific tasks
 	if !b.IsTaskRegistered(signature.Name) {
-		log.INFO.Printf("Task not registered with this worker. Requeing message: %s", delivery)
-
-		b.rclient.RPush(getQueueGR(b.GetConfig(), taskProcessor), delivery)
+		// can just return nil here, because retries for this broker
+		// are machinery requeuing it on error, and we return nil here
+		// to avoid that
 		return nil
 	}
 
