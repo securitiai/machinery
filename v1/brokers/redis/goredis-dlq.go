@@ -307,6 +307,7 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	signature.UUID = gHash
 
 	if !b.IsTaskRegistered(signature.Name) {
+		log.INFO.Printf("Task not registered with this worker. message: %+v", signature)
 		// deleting sig so that this isn't picked up by redis-reaper later
 		err := b.deleteOne(signature)
 		if err != nil {

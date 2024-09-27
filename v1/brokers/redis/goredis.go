@@ -300,6 +300,7 @@ func (b *BrokerGR) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor
 	}
 
 	if !b.IsTaskRegistered(signature.Name) {
+		log.INFO.Printf("Task not registered with this worker. message: %+v", signature)
 		// can just return nil here, because retries for this broker
 		// are machinery requeuing it on error, and we return nil here
 		// to avoid that
