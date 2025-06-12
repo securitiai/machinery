@@ -20,7 +20,6 @@ import (
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	awssqs "github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
-	"github.com/aws/aws-sdk-go/service/sqs"
 )
 
 const (
@@ -194,7 +193,7 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 	result, err := b.service.SendMessage(ctx, MsgInput)
 
 	if err != nil {
-		if strings.Contains(err.Error(), sqs.ErrCodeQueueDoesNotExist) {
+		if strings.Contains(err.Error(), (&types.QueueDoesNotExist{}).ErrorCode()) {
 			log.INFO.Printf("Error Queue doesn't exist: %v", err)
 		} else {
 			log.ERROR.Printf("Error when sending a message: %v", err)
