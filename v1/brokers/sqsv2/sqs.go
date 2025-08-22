@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -193,8 +194,9 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 	result, err := b.service.SendMessage(ctx, MsgInput)
 
 	if err != nil {
-		if strings.Contains(err.Error(), (&types.QueueDoesNotExist{}).ErrorCode()) {
-			log.INFO.Printf("Error Queue doesn't exist: %v", err)
+		if strings.Contains(err.Error(), (&types.QueueDoesNotExist{}).ErrorCode()) &&
+			strings.HasPrefix(signature.RoutingKey, fmt.Sprintf("t-%s-", os.Getenv("environment"))) {
+			log.INFO.Printf("Error source queue doesn't exist: %v", err)
 		} else {
 			log.ERROR.Printf("Error when sending a message: %v", err)
 		}
