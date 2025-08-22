@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	"os"
 	"strings"
 	"sync"
@@ -194,9 +195,9 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 	result, err := b.service.SendMessage(ctx, MsgInput)
 
 	if err != nil {
-		if strings.Contains(err.Error(), (&types.QueueDoesNotExist{}).ErrorCode()) &&
+		if strings.Contains(err.Error(), sqs.ErrCodeQueueDoesNotExist) &&
 			strings.HasPrefix(signature.RoutingKey, fmt.Sprintf("t-%s-", os.Getenv("environment"))) {
-			log.INFO.Printf("Error source queue doesn't exist: %v", err)
+			log.INFO.Printf("Error source queue %s doesn't exist: %v", signature.RoutingKey, err)
 		} else {
 			log.ERROR.Printf("Error when sending a message: %v", err)
 		}
