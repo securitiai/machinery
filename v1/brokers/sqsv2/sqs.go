@@ -193,7 +193,7 @@ func (b *Broker) Publish(ctx context.Context, signature *tasks.Signature) error 
 	result, err := b.service.SendMessage(ctx, MsgInput)
 
 	if err != nil {
-		log.ERROR.Printf("Error when sending a message: %v", err)
+		log.DEBUG.Printf("Error when sending a message: %v", err)
 		return err
 
 	}
