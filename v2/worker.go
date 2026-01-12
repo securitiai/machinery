@@ -46,7 +46,6 @@ func (worker *Worker) LaunchAsync(errorsChan chan<- error) {
 
 	// Log some useful information about worker configuration
 	log.INFO.Printf("Launching a worker with the following settings:")
-	log.INFO.Printf("- Broker: %s", cnf.Broker)
 	if worker.Queue == "" {
 		log.INFO.Printf("- DefaultQueue: %s", cnf.DefaultQueue)
 	} else {
