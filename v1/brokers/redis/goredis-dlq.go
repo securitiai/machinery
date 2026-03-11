@@ -3,13 +3,17 @@ package redis
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/RichardKnop/redsync"
+	"github.com/go-redis/redis"
+	"github.com/spf13/cast"
 
 	"github.com/RichardKnop/machinery/v1/brokers/errs"
 	"github.com/RichardKnop/machinery/v1/brokers/iface"
@@ -17,19 +21,71 @@ import (
 	"github.com/RichardKnop/machinery/v1/config"
 	"github.com/RichardKnop/machinery/v1/log"
 	"github.com/RichardKnop/machinery/v1/tasks"
-	"github.com/RichardKnop/redsync"
-	"github.com/btcsuite/btcutil/base58"
-	"github.com/go-redis/redis"
-	"github.com/spf13/cast"
 )
 
 const (
 	messageVisibilitySet = "message-visibility-set"
-	hSetMessageKey       = "message"
-	hSetQueueKey         = "queue"
-	hSetRetryKey         = "visibility_counter"
-	taskPrefix           = "task_%s"
+	hSetExpirySeconds    = 604800 // 1 week
 )
+
+// popResult holds the result of a Lua pop operation
+type popResult struct {
+	hash         string
+	message      string
+	receiveCount int
+}
+
+// popLuaScript atomically pops a message from the queue, computes its hash
+// using redis.sha1hex(), stores metadata in an HSET, and adds it to the
+// visibility timeout set. Returns the hash, message body, and current
+// receive count so the caller doesn't need separate lookups.
+var popLuaScript = `
+local queue = KEYS[1]
+local visibility_set = KEYS[2]
+
+local visibility_timeout = tonumber(ARGV[1])
+local queue_name = ARGV[2]
+local current_time = tonumber(ARGV[3])
+local hset_expiry = tonumber(ARGV[4])
+
+-- Get first message from queue
+local message = redis.call('LRANGE', queue, 0, 0)
+if #message == 0 then
+    return nil
+end
+
+local queue_message = message[1]
+
+-- Compute hash atomically inside Lua to avoid race conditions
+local task_hash = 'task_' .. redis.sha1hex(queue_message)
+
+-- Calculate visibility timeout timestamp
+local visibility_timestamp = current_time + visibility_timeout
+
+-- Store message metadata in hash
+redis.call('HMSET', task_hash, 'message', queue_message, 'queue', queue_name)
+
+-- Add to visibility set with expiry timestamp as score
+redis.call('ZADD', visibility_set, visibility_timestamp, task_hash)
+
+-- Set expiry on the HSET to prevent leaks
+if hset_expiry > 0 then
+    redis.call('EXPIRE', task_hash, hset_expiry)
+end
+
+-- Get current receive count (visibility_counter) from the HSET
+local receive_count = redis.call('HGET', task_hash, 'visibility_counter')
+if not receive_count then
+    receive_count = 0
+else
+    receive_count = tonumber(receive_count)
+end
+
+-- Remove message from queue
+redis.call('LREM', queue, 1, queue_message)
+
+return {task_hash, queue_message, receive_count}
+`
 
 // BrokerGR_DLQ represents a Redis broker using go-redis, with enhancements for DLQ support
 type BrokerGR_DLQ struct {
@@ -103,7 +159,7 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 	}
 
 	// Channel to which we will push tasks ready for processing by worker
-	deliveries := make(chan []byte, concurrency)
+	deliveries := make(chan popResult, concurrency)
 	pool := make(chan struct{}, concurrency)
 
 	// initialize worker pool with maxWorkers workers
@@ -111,9 +167,9 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 		pool <- struct{}{}
 	}
 
-	// A receiving goroutine keeps popping messages from the queue by BLPOP
-	// If the message is valid and can be unmarshaled into a proper structure
-	// we send it to the deliveries channel
+	// A receiving goroutine keeps popping messages from the queue using a Lua script.
+	// The Lua script atomically pops the message, computes its hash, and returns
+	// the hash, message body, and receive count.
 	go func() {
 
 		log.INFO.Print("[*] Waiting for messages. To exit press CTRL+C")
@@ -125,10 +181,9 @@ func (b *BrokerGR_DLQ) StartConsuming(consumerTag string, concurrency int, taskP
 				close(deliveries)
 				return
 			case <-pool:
-				task, _ := b.nextTask(getQueueGR(b.GetConfig(), taskProcessor))
-				//TODO: should this error be ignored?
-				if len(task) > 0 {
-					deliveries <- task
+				result, _ := b.nextTask(getQueueGR(b.GetConfig(), taskProcessor))
+				if result != nil {
+					deliveries <- *result
 				} else {
 					pool <- struct{}{}
 				}
@@ -260,7 +315,7 @@ func (b *BrokerGR_DLQ) GetDelayedTasks() ([]*tasks.Signature, error) {
 
 // consume takes delivered messages from the channel and manages a worker pool
 // to process tasks concurrently
-func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
+func (b *BrokerGR_DLQ) consume(deliveries <-chan popResult, concurrency int, taskProcessor iface.TaskProcessor, pool chan struct{}) error {
 	errorsChan := make(chan error)
 
 	for {
@@ -293,18 +348,16 @@ func (b *BrokerGR_DLQ) consume(deliveries <-chan []byte, concurrency int, taskPr
 }
 
 // consumeOne processes a single message using TaskProcessor
-func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProcessor) error {
+func (b *BrokerGR_DLQ) consumeOne(delivery popResult, taskProcessor iface.TaskProcessor) error {
 	signature := new(tasks.Signature)
-	decoder := json.NewDecoder(bytes.NewReader(delivery))
+	decoder := json.NewDecoder(bytes.NewReader([]byte(delivery.message)))
 	decoder.UseNumber()
 	if err := decoder.Decode(signature); err != nil {
-		return errs.NewErrCouldNotUnmarshaTaskSignature(delivery, err)
+		return errs.NewErrCouldNotUnmarshaTaskSignature([]byte(delivery.message), err)
 	}
 	// propagating hash UUID for possible application usage, for example, refreshing visibility
 	oldUuid := signature.UUID
-	gHashByte := sha256.Sum256(delivery)
-	gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
-	signature.UUID = gHash
+	signature.UUID = delivery.hash
 
 	if !b.IsTaskRegistered(signature.Name) {
 		log.INFO.Printf("Task not registered with this worker. message: %+v", signature)
@@ -317,16 +370,11 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 		return nil
 	}
 
-	stringCmd := b.rclient.HGet(gHash, hSetRetryKey)
-	if err := stringCmd.Err(); err != nil {
-		log.DEBUG.Printf("Could not retrieve message keys from redis. Error: %s", err.Error())
-	}
-	val := stringCmd.Val()
-
-	receiveCount := cast.ToInt(val)
-	//increment before adding to signature since ApproximateReceiveCount is the number of times a message is received, whereas the value stored in hset represents the number of retries which is one less than ApproximateReceiveCount
-	receiveCount++
-
+	// receiveCount comes from the Lua script (visibility_counter from HSET).
+	// Increment before adding to signature since ApproximateReceiveCount is the number
+	// of times a message is received, whereas the HSET value represents the number of
+	// retries which is one less than ApproximateReceiveCount.
+	receiveCount := delivery.receiveCount + 1
 	receiveCountString := cast.ToString(receiveCount)
 
 	signature.Attributes = map[string]*string{}
@@ -351,8 +399,10 @@ func (b *BrokerGR_DLQ) consumeOne(delivery []byte, taskProcessor iface.TaskProce
 	return nil
 }
 
-// nextTask pops next available task from the default queue
-func (b *BrokerGR_DLQ) nextTask(queue string) (result []byte, err error) {
+// nextTask pops next available task from the default queue using a Lua script
+// for atomicity. The hash is computed inside the Lua script using redis.sha1hex()
+// to avoid race conditions between peeking and popping.
+func (b *BrokerGR_DLQ) nextTask(queue string) (*popResult, error) {
 
 	pollPeriodMilliseconds := 1000 // default poll period for normal tasks
 	if b.GetConfig().Redis != nil {
@@ -366,55 +416,48 @@ func (b *BrokerGR_DLQ) nextTask(queue string) (result []byte, err error) {
 	if visibilityTimeout <= 0 {
 		visibilityTimeout = 60
 	}
-	watchFunc := func(tx *redis.Tx) error {
-		items, err := tx.LRange(queue, 0, 0).Result()
-		if err != nil {
-			return err
-		}
-		// items[0] - the name of the key where an element was popped
-		// items[1] - the value of the popped element
-		if len(items) != 1 {
-			return redis.Nil
-		}
-		gHashByte := sha256.Sum256([]byte(items[0]))
-		gHash := fmt.Sprintf(taskPrefix, base58.Encode(gHashByte[:sha256.Size]))
 
-		fields := map[string]interface{}{
-			hSetMessageKey: items[0],
-			hSetQueueKey:   queue,
-		}
-		z := redis.Z{Score: float64(time.Now().Add(time.Duration(visibilityTimeout) * time.Second).Unix()), Member: gHash}
-		_, err = tx.TxPipelined(func(pipe redis.Pipeliner) error {
-			if err := pipe.HMSet(gHash, fields).Err(); err != nil {
-				return err
-			}
-			if err := pipe.ZAdd(messageVisibilitySet, z).Err(); err != nil {
-				return err
-			}
-			if err := pipe.LRem(queue, 1, items[0]).Err(); err != nil {
-				return err
-			}
-			return nil
-		})
-
-		if err != nil {
-			return err
-		}
-		result = []byte(items[0])
-		return nil
+	keys := []string{queue, messageVisibilitySet}
+	args := []interface{}{
+		visibilityTimeout,
+		queue,
+		time.Now().Unix(),
+		hSetExpirySeconds,
 	}
 
-	err = b.rclient.Watch(watchFunc, queue)
+	scriptResult, err := b.rclient.Eval(popLuaScript, keys, args...).Result()
 	if err != nil {
-		if err == redis.Nil {
-			// if no keys found then need to delay to stop constant bombarding
+		if errors.Is(err, redis.Nil) {
 			time.Sleep(pollPeriod)
 		}
-
 		return nil, err
 	}
 
-	return result, nil
+	resultArray, ok := scriptResult.([]interface{})
+	if !ok || len(resultArray) != 3 {
+		return nil, fmt.Errorf("unexpected result format from pop Lua script")
+	}
+
+	hash, ok := resultArray[0].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid hash in pop Lua script result")
+	}
+
+	message, ok := resultArray[1].(string)
+	if !ok {
+		return nil, fmt.Errorf("invalid message in pop Lua script result")
+	}
+
+	receiveCount := 0
+	if rc, ok := resultArray[2].(int64); ok {
+		receiveCount = int(rc)
+	}
+
+	return &popResult{
+		hash:         hash,
+		message:      message,
+		receiveCount: receiveCount,
+	}, nil
 }
 
 // nextDelayedTask pops a value from the ZSET key using WATCH/MULTI/EXEC commands.
